@@ -1,10 +1,10 @@
+import os
+import random
+from datetime import datetime
 from flask import Flask, request, jsonify, render_template, redirect, url_for, session, send_from_directory
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
 import yt_dlp
-import os
-import random
-from datetime import datetime
 from flask_migrate import Migrate
 
 app = Flask(__name__)
@@ -15,6 +15,9 @@ app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:/
 app.config['DOWNLOAD_FOLDER'] = os.path.join(app.instance_path, 'downloads')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['DEBUG'] = os.environ.get('FLASK_ENV') == 'development'
+
+# Ensure download folder exists
+os.makedirs(app.config['DOWNLOAD_FOLDER'], exist_ok=True)
 
 # Initialize extensions
 db = SQLAlchemy(app)
@@ -87,26 +90,32 @@ def download():
         return jsonify({'error': 'URL is required'}), 400
 
     try:
-        user_agents = [
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:89.0) Gecko/20100101 Firefox/89.0',
-            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        ]
-
+        # Enhanced yt-dlp options with better error handling
         ydl_opts = {
             'outtmpl': os.path.join(app.config['DOWNLOAD_FOLDER'], '%(title)s.%(ext)s'),
             'quiet': True,
-            'referer': 'https://www.youtube.com/',
-            'user-agent': random.choice(user_agents),
-            'retries': 10,
-            'fragment_retries': 10,
-            'extract_flat': False,
+            'no_warnings': True,
             'ignoreerrors': False,
+            'retries': 3,
+            'fragment_retries': 3,
+            'extract_flat': False,
             'skip_unavailable_fragments': False,
             'ratelimit': 1000000,
             'throttledratelimit': 500000,
+            'cookiefile': os.path.join(app.instance_path, 'cookies.txt'),
+            'referer': 'https://www.youtube.com/',
+            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'extractor_args': {
+                'youtube': {
+                    'skip': ['dash', 'hls']
+                }
+            },
+            'postprocessor_args': {
+                'ffmpeg': ['-hide_banner', '-loglevel', 'error']
+            }
         }
 
+        # Format selection
         if format_type == 'mp3':
             ydl_opts.update({
                 'format': 'bestaudio/best',
@@ -121,10 +130,26 @@ def download():
         elif format_type == 'mp4':
             ydl_opts['format'] = 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best'
         else:
-            ydl_opts['format'] = 'bestvideo[ext=webm]+bestaudio[ext=webm]/best[ext=webm]/best'
+            ydl_opts['format'] = 'best'
+
+        # Additional options for problematic videos
+        ydl_opts['extractor_retries'] = 3
+        ydl_opts['socket_timeout'] = 30
+        ydl_opts['noplaylist'] = True
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
+            # First extract info without downloading to check availability
+            info = ydl.extract_info(url, download=False)
+            
+            if not info:
+                return jsonify({'error': 'Could not extract video information'}), 400
+            
+            # Check if video is available
+            if info.get('availability') == 'unavailable':
+                return jsonify({'error': 'Video is unavailable. It may be private, deleted, or age-restricted.'}), 403
+            
+            # Now proceed with download
+            ydl.download([url])
             filename = ydl.prepare_filename(info)
 
             if format_type == 'mp3':
@@ -132,6 +157,7 @@ def download():
 
             video_title = info.get('title', 'Unknown Title')
 
+            # Save to download history
             history = DownloadHistory(
                 user_id=session['user_id'],
                 video_url=url,
@@ -145,15 +171,22 @@ def download():
                 'filename': os.path.basename(filename),
                 'title': video_title
             })
+
     except yt_dlp.utils.DownloadError as e:
-        if 'HTTP Error 403' in str(e):
-            return jsonify({
-                'error': 'YouTube is blocking downloads. Try again later or use a VPN.',
-                'details': str(e)
-            }), 403
-        return jsonify({'error': str(e)}), 500
+        error_msg = str(e)
+        if 'Video unavailable' in error_msg:
+            return jsonify({'error': 'Video is unavailable. It may be private, deleted, or age-restricted.'}), 403
+        elif 'Private video' in error_msg:
+            return jsonify({'error': 'This is a private video. Cannot download.'}), 403
+        elif 'Age restricted' in error_msg:
+            return jsonify({'error': 'Age-restricted video. Try adding YouTube cookies.'}), 403
+        elif 'HTTP Error 403' in error_msg:
+            return jsonify({'error': 'YouTube is blocking downloads. Try again later or use a VPN.'}), 403
+        else:
+            return jsonify({'error': f'Download error: {error_msg}'}), 500
+            
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': f'Unexpected error: {str(e)}'}), 500
 
 @app.route('/history')
 def history():
@@ -171,7 +204,8 @@ def download_file(filename):
         return send_from_directory(
             app.config['DOWNLOAD_FOLDER'],
             filename,
-            as_attachment=True
+            as_attachment=True,
+            mimetype='application/octet-stream'
         )
     except FileNotFoundError:
         return jsonify({'error': 'File not found'}), 404
