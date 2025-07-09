@@ -1,0 +1,28 @@
+{% extends 'base.html' %}
+{% block content %}
+    <h1 class="text-center mb-4">Download History</h1>
+    <div class="row justify-content-center">
+        <div class="col-md-8">
+            <table class="table table-striped">
+                <thead>
+                    <tr>
+                        <th>Video Title</th>
+                        <th>URL</th>
+                        <th>Download Time</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for entry in history %}
+                        <tr>
+                            <td>{{ entry.video_title }}</td>
+                            <td><a href="{{ entry.video_url }}" target="_blank">{{ entry.video_url }}</a></td>
+                            <td>{{ entry.download_time }}</td>
+                            <td><a href="{{ url_for('download_file', filename=entry.video_title + '.mp4') }}" class="btn btn-sm btn-primary">Download Again</a></td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+{% endblock %}
