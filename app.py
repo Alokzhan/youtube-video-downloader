@@ -66,16 +66,25 @@ with app.app_context():
         raise
 
 def validate_youtube_url(url):
-    """Validate and normalize YouTube URLs"""
+    """Validate and normalize YouTube URLs with strict video ID validation"""
     patterns = [
-        r'(https?://)?(www\.)?youtube\.com/watch\?v=([^&]+)',
-        r'(https?://)?youtu\.be/([^?]+)',
-        r'(https?://)?(www\.)?youtube\.com/shorts/([^?]+)'
+        r'(https?://)?(www\.)?youtube\.com/watch\?v=([a-zA-Z0-9_-]{11})',
+        r'(https?://)?youtu\.be/([a-zA-Z0-9_-]{11})',
+        r'(https?://)?(www\.)?youtube\.com/shorts/([a-zA-Z0-9_-]{11})'
     ]
+    
     for pattern in patterns:
         match = re.search(pattern, url)
         if match:
-            return f"https://www.youtube.com/watch?v={match.group(3) if 'watch' in pattern else match.group(2)}"
+            video_id = match.group(3) if 'watch' in pattern or 'shorts' in pattern else match.group(2)
+            return f"https://www.youtube.com/watch?v={video_id}"
+    
+    # Handle URLs with additional parameters
+    base_pattern = r'(https?://)?(www\.)?(youtu\.be/|youtube\.com/watch\?v=)([a-zA-Z0-9_-]{11})'
+    match = re.search(base_pattern, url.split('&')[0].split('?')[0])
+    if match:
+        return f"https://www.youtube.com/watch?v={match.group(4)}"
+    
     return None
 
 @app.route('/')
@@ -202,7 +211,25 @@ def download():
         # Validate and normalize URL
         normalized_url = validate_youtube_url(url)
         if not normalized_url:
-            return jsonify({'error': 'Invalid YouTube URL format'}), 400
+            return jsonify({
+                'error': 'Invalid YouTube URL format',
+                'details': 'URL must be in format: https://youtu.be/VIDEO_ID or https://www.youtube.com/watch?v=VIDEO_ID',
+                'example': 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
+            }), 400
+
+        # Extract and validate video ID
+        video_id = None
+        if 'v=' in normalized_url:
+            video_id = normalized_url.split('v=')[1].split('&')[0]
+        elif 'youtu.be/' in normalized_url:
+            video_id = normalized_url.split('youtu.be/')[1].split('?')[0]
+            
+        if not video_id or len(video_id) != 11:
+            return jsonify({
+                'error': 'Invalid YouTube video ID',
+                'details': 'YouTube video IDs must be exactly 11 characters long',
+                'example': 'dQw4w9WgXcQ'
+            }), 400
 
         # Initialize download history record
         history = DownloadHistory(
@@ -288,7 +315,11 @@ def download():
     except Exception as e:
         db.session.rollback()
         logger.error(f"Unexpected error: {str(e)}\n{traceback.format_exc()}")
-        return jsonify({'error': 'Internal server error'}), 500
+        return jsonify({
+            'error': 'Download failed',
+            'details': str(e),
+            'solution': 'Please check the URL and try again. If the problem persists, contact support.'
+        }), 500
 
 @app.route('/history')
 def history():
