@@ -1,0 +1,19 @@
+# Netscape HTTP Cookie File
+# http://curl.haxx.se/rfc/cookie_spec.html
+# This is a generated file!  Do not edit.
+
+.github.com	TRUE	/	TRUE	1781354690	_octo	GH1.1.1587660955.1749818709
+.github.com	TRUE	/	TRUE	1765521370	GHCC	Required:1-Analytics:1-SocialMedia:1-Advertising:1
+github.com	FALSE	/	TRUE	1781505379	MicrosoftApplicationsTelemetryDeviceId	6e93190a-d2bd-4f1b-8e9a-fc420ffe9e7a
+github.com	FALSE	/	TRUE	1781505375	MSFPC	GUID=1239bfb280af487981216371533f14c6&HASH=1239&LV=202506&V=4&LU=1749969398594
+github.com	FALSE	/	TRUE	1783421309	_device_id	7e3361bfa60c5555ce8f2432fa8ec9c3
+github.com	FALSE	/	TRUE	1757745415	saved_user_sessions	180913407%3Ai6QUk_QA3VqjN4j5RzoBrS5vLr5EsoBB9ywcHWo0itQ7iG_9
+github.com	FALSE	/	TRUE	1753094909	user_session	i6QUk_QA3VqjN4j5RzoBrS5vLr5EsoBB9ywcHWo0itQ7iG_9
+github.com	FALSE	/	TRUE	1753094909	__Host-user_session_same_site	i6QUk_QA3VqjN4j5RzoBrS5vLr5EsoBB9ywcHWo0itQ7iG_9
+.github.com	TRUE	/	TRUE	1781505415	logged_in	yes
+.github.com	TRUE	/	TRUE	1781505415	dotcom_user	Alokzhan
+.github.com	TRUE	/	TRUE	0	color_mode	%7B%22color_mode%22%3A%22auto%22%2C%22light_theme%22%3A%7B%22name%22%3A%22light%22%2C%22color_mode%22%3A%22light%22%7D%2C%22dark_theme%22%3A%7B%22name%22%3A%22dark%22%2C%22color_mode%22%3A%22dark%22%7D%7D
+.github.com	TRUE	/	TRUE	0	cpu_bucket	lg
+.github.com	TRUE	/	TRUE	0	preferred_color_mode	light
+.github.com	TRUE	/	TRUE	0	tz	Asia%2FCalcutta
+github.com	FALSE	/	TRUE	0	_gh_sess	GWvCYl3mepQCGO7y5fbeJWis5jmPshQbYI7CWAfGYc15bScVpFKGxfBBh2ScLh8lMuBVBFsIoaq9H9IXdRv03K5f5X6e7yqpiNtrByYgAya7r9g0Yam%2FV78FeYrRpXIvNR9vpmcItvvbo1DPo%2BPmRlBp17YmSrkvBGr1aMAvYFff06rSNbRuUDT26NoB%2BpxPkEyJKguhw3Y2MMN8TbL9oSL6L3j2ul0BK9itP7TB1a4%2Bjr5MRYjwJ%2FWUfTcz9bGMVxKHJ7CCbBlSC3Q9VfS5AQu9s6T%2B2mJfrLSa2GXYzbQKLEZ8x6arz%2FslftAqv4MSDQ2wJ%2BGrpGhztf98yN17FddYRmYedZhsl%2BPT05KQZVkPDcdwitj6Klbd5aH8fXaxrcTXbJxgOXzisV06LfkD6JOoeQQ%3D--TSgh77nKZMjoFPjO--oPlAcaK365udUUZ4dc4yCA%3D%3D
