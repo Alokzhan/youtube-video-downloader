@@ -1,33 +1,43 @@
 import os
 import random
+import logging
 from datetime import datetime
-from flask import Flask, request, jsonify, render_template, redirect, url_for, session, send_from_directory
+from flask import Flask, request, jsonify, render_template, redirect, url_for, session, send_from_directory, current_app
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
 import yt_dlp
 from flask_migrate import Migrate
 
+# Initialize Flask app
 app = Flask(__name__)
 
-# Configuration
-app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'your-secret-key-dev')
-app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:///database.db').replace('postgres://', 'postgresql://')
-app.config['DOWNLOAD_FOLDER'] = os.path.join(app.instance_path, 'downloads')
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['DEBUG'] = os.environ.get('FLASK_ENV') == 'development'
+# Enhanced configuration
+app.config.update(
+    SECRET_KEY=os.environ.get('SECRET_KEY', 'dev-secret-key-' + os.urandom(16).hex()),
+    SQLALCHEMY_DATABASE_URI=os.environ.get('DATABASE_URL', 'sqlite:///database.db').replace('postgres://', 'postgresql://', 1),
+    SQLALCHEMY_TRACK_MODIFICATIONS=False,
+    DEBUG=os.environ.get('FLASK_ENV') == 'development',
+    MAX_CONTENT_LENGTH=500 * 1024 * 1024,  # 500MB file size limit
+)
 
-# Ensure download folder exists
+# Configure download folder - different approach for Render compatibility
+app.config['DOWNLOAD_FOLDER'] = os.path.join(os.getcwd(), 'downloads')
 os.makedirs(app.config['DOWNLOAD_FOLDER'], exist_ok=True)
 
 # Initialize extensions
 db = SQLAlchemy(app)
 migrate = Migrate(app, db)
 
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 # Database Models
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), unique=True, nullable=False)
     password = db.Column(db.String(120), nullable=False)
+    downloads = db.relationship('DownloadHistory', backref='user', lazy=True)
 
 class DownloadHistory(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -50,8 +60,11 @@ def index():
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
-        username = request.form['username']
-        password = request.form['password']
+        username = request.form.get('username')
+        password = request.form.get('password')
+        if not username or not password:
+            return render_template('login.html', error='Username and password required')
+        
         user = User.query.filter_by(username=username).first()
         if user and check_password_hash(user.password, password):
             session['user_id'] = user.id
@@ -62,10 +75,14 @@ def login():
 @app.route('/register', methods=['GET', 'POST'])
 def register():
     if request.method == 'POST':
-        username = request.form['username']
-        password = request.form['password']
+        username = request.form.get('username')
+        password = request.form.get('password')
+        if not username or not password:
+            return render_template('register.html', error='Username and password required')
+        
         if User.query.filter_by(username=username).first():
-            return render_template('register.html', error='Username exists')
+            return render_template('register.html', error='Username already exists')
+        
         hashed_password = generate_password_hash(password, method='pbkdf2:sha256')
         new_user = User(username=username, password=hashed_password)
         db.session.add(new_user)
@@ -78,23 +95,24 @@ def logout():
     session.pop('user_id', None)
     return redirect(url_for('login'))
 
+# Enhanced download route with Render-specific fixes
 @app.route('/download', methods=['POST'])
 def download():
     if 'user_id' not in session:
-        return jsonify({'error': 'Please log in'}), 401
+        return jsonify({'error': 'Authentication required'}), 401
 
     url = request.form.get('url')
     format_type = request.form.get('format', 'mp4')
 
     if not url:
-        return jsonify({'error': 'URL is required'}), 400
+        return jsonify({'error': 'YouTube URL is required'}), 400
 
     try:
-        # Enhanced yt-dlp options with better error handling
+        # Render-compatible yt-dlp configuration
         ydl_opts = {
             'outtmpl': os.path.join(app.config['DOWNLOAD_FOLDER'], '%(title)s.%(ext)s'),
-            'quiet': True,
-            'no_warnings': True,
+            'quiet': False,  # Keep False to capture logs in Render
+            'no_warnings': False,
             'ignoreerrors': False,
             'retries': 3,
             'fragment_retries': 3,
@@ -102,20 +120,22 @@ def download():
             'skip_unavailable_fragments': False,
             'ratelimit': 1000000,
             'throttledratelimit': 500000,
-            'cookiefile': os.path.join(app.instance_path, 'cookies.txt'),
+            'cookiefile': os.path.join(app.instance_path, 'cookies.txt') if os.path.exists(os.path.join(app.instance_path, 'cookies.txt')) else None,
             'referer': 'https://www.youtube.com/',
-            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-            'extractor_args': {
-                'youtube': {
-                    'skip': ['dash', 'hls']
-                }
-            },
-            'postprocessor_args': {
-                'ffmpeg': ['-hide_banner', '-loglevel', 'error']
-            }
+            'user_agent': random.choice([
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            ]),
+            'extractor_args': {'youtube': {'skip': ['dash', 'hls']}},
+            'postprocessor_args': {'ffmpeg': ['-hide_banner', '-loglevel', 'error']},
+            'socket_timeout': 30,
+            'extractor_retries': 3,
+            'noplaylist': True,
+            'proxy': os.environ.get('HTTPS_PROXY', ''),
+            'source_address': '0.0.0.0',
         }
 
-        # Format selection
+        # Format configuration
         if format_type == 'mp3':
             ydl_opts.update({
                 'format': 'bestaudio/best',
@@ -125,39 +145,35 @@ def download():
                     'preferredquality': '192',
                 }],
             })
-        elif format_type == 'best':
-            ydl_opts['format'] = 'bestvideo+bestaudio/best'
         elif format_type == 'mp4':
             ydl_opts['format'] = 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best'
         else:
             ydl_opts['format'] = 'best'
 
-        # Additional options for problematic videos
-        ydl_opts['extractor_retries'] = 3
-        ydl_opts['socket_timeout'] = 30
-        ydl_opts['noplaylist'] = True
+        logger.info(f"Attempting to download: {url} with options: {ydl_opts}")
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            # First extract info without downloading to check availability
+            # First check video availability
             info = ydl.extract_info(url, download=False)
             
             if not info:
-                return jsonify({'error': 'Could not extract video information'}), 400
+                logger.error(f"Failed to extract info for URL: {url}")
+                return jsonify({'error': 'Could not retrieve video information'}), 400
             
-            # Check if video is available
             if info.get('availability') == 'unavailable':
-                return jsonify({'error': 'Video is unavailable. It may be private, deleted, or age-restricted.'}), 403
+                logger.warning(f"Video unavailable: {url}")
+                return jsonify({'error': 'Video is unavailable (private, deleted, or restricted)'}), 403
             
-            # Now proceed with download
+            # Proceed with download
             ydl.download([url])
             filename = ydl.prepare_filename(info)
 
             if format_type == 'mp3':
                 filename = os.path.splitext(filename)[0] + '.mp3'
 
-            video_title = info.get('title', 'Unknown Title')
+            video_title = info.get('title', 'Untitled Video')
 
-            # Save to download history
+            # Record download history
             history = DownloadHistory(
                 user_id=session['user_id'],
                 video_url=url,
@@ -167,6 +183,7 @@ def download():
             db.session.add(history)
             db.session.commit()
 
+            logger.info(f"Successfully downloaded: {video_title}")
             return jsonify({
                 'filename': os.path.basename(filename),
                 'title': video_title
@@ -174,42 +191,68 @@ def download():
 
     except yt_dlp.utils.DownloadError as e:
         error_msg = str(e)
-        if 'Video unavailable' in error_msg:
-            return jsonify({'error': 'Video is unavailable. It may be private, deleted, or age-restricted.'}), 403
-        elif 'Private video' in error_msg:
-            return jsonify({'error': 'This is a private video. Cannot download.'}), 403
-        elif 'Age restricted' in error_msg:
-            return jsonify({'error': 'Age-restricted video. Try adding YouTube cookies.'}), 403
-        elif 'HTTP Error 403' in error_msg:
-            return jsonify({'error': 'YouTube is blocking downloads. Try again later or use a VPN.'}), 403
+        logger.error(f"Download failed: {error_msg}")
+        
+        if 'unavailable' in error_msg.lower():
+            return jsonify({'error': 'Video is not available for download'}), 403
+        elif 'private' in error_msg.lower():
+            return jsonify({'error': 'Private videos cannot be downloaded'}), 403
+        elif 'age restricted' in error_msg.lower():
+            return jsonify({'error': 'Age-restricted content (try adding cookies)'}), 403
+        elif '403' in error_msg:
+            return jsonify({'error': 'YouTube blocked the request (try VPN or later)'}), 403
         else:
-            return jsonify({'error': f'Download error: {error_msg}'}), 500
+            return jsonify({'error': f'Download failed: {error_msg}'}), 500
             
     except Exception as e:
-        return jsonify({'error': f'Unexpected error: {str(e)}'}), 500
+        logger.error(f"Unexpected error: {str(e)}", exc_info=True)
+        return jsonify({'error': 'Internal server error'}), 500
 
 @app.route('/history')
 def history():
     if 'user_id' not in session:
         return redirect(url_for('login'))
-    history = DownloadHistory.query.filter_by(user_id=session['user_id']).order_by(
-        DownloadHistory.download_time.desc()).all()
-    return render_template('history.html', history=history)
+    
+    downloads = DownloadHistory.query.filter_by(
+        user_id=session['user_id']
+    ).order_by(
+        DownloadHistory.download_time.desc()
+    ).all()
+    
+    return render_template('history.html', history=downloads)
 
+# Render-compatible file download handler
 @app.route('/download_file/<filename>')
 def download_file(filename):
     if 'user_id' not in session:
         return redirect(url_for('login'))
+    
     try:
+        file_path = os.path.join(app.config['DOWNLOAD_FOLDER'], filename)
+        
+        if not os.path.exists(file_path):
+            logger.warning(f"File not found: {filename}")
+            return jsonify({'error': 'File not available (may have expired)'}), 404
+            
         return send_from_directory(
             app.config['DOWNLOAD_FOLDER'],
             filename,
             as_attachment=True,
             mimetype='application/octet-stream'
         )
-    except FileNotFoundError:
-        return jsonify({'error': 'File not found'}), 404
+    except Exception as e:
+        logger.error(f"File download failed: {str(e)}")
+        return jsonify({'error': 'Could not download file'}), 500
+
+# Health check endpoint for Render
+@app.route('/health')
+def health_check():
+    return jsonify({
+        'status': 'healthy',
+        'download_folder': os.path.exists(app.config['DOWNLOAD_FOLDER']),
+        'database_connected': db.session.query('1').from_statement(db.text('SELECT 1')).first() is not None
+    })
 
 if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host='0.0.0.0', port=port)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host='0.0.0.0', port=port, debug=app.config['DEBUG'])
